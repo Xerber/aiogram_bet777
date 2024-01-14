@@ -10,10 +10,11 @@ from aiogram.methods.send_photo import SendPhoto
 from aiogram.methods.send_message import SendMessage
 from aiogram.methods.edit_message_reply_markup import EditMessageReplyMarkup
 from aiogram.methods.edit_message_text import EditMessageText
+from aiogram.methods.delete_my_commands import DeleteMyCommands
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import KeyboardBuilder
-from aiogram.types import Message, InlineKeyboardButton, FSInputFile, bot_command_scope_default, bot_command
+from aiogram.utils.keyboard import KeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.types import Message, InlineKeyboardButton, FSInputFile, bot_command
 import dbwork as db
 from loader import loop
 from datetime import datetime
@@ -36,6 +37,14 @@ accepted_button.button(text='✅ Принято/Accepted', callback_data='#')
 
 delete_button = KeyboardBuilder(button_type=InlineKeyboardButton)
 delete_button.button(text='❌ Удалить', callback_data='delete')
+
+admin_button = ReplyKeyboardBuilder()
+admin_button.button(text='/Отправить_матч')
+admin_button.button(text='/Отправить_исход')
+admin_button.button(text='/Написать_всем')
+admin_button.button(text='/Кто_в_боте')
+admin_button.button(text='/Кто_готов')
+admin_button.adjust(1,2,2)
 
 class Form(StatesGroup):
     outcome = State()
@@ -84,10 +93,10 @@ async def cmd_start(message: Message):
     await message.answer(f'Please fill in the username in the telegram settings and try adding it again')
 
 
-@dp.message(F.text, Command("whois_ready"))
+@dp.message(F.text, Command("Кто_готов"))
 async def whois_ready(message: Message):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     ready_users = await DB.get_ready()
     if len(ready_users) > 0:
       text = ''
@@ -98,10 +107,10 @@ async def whois_ready(message: Message):
     await message.answer(f'{text}')
 
 
-@dp.message(F.text, Command("show_users"))
+@dp.message(F.text, Command("Кто_в_боте"))
 async def show_users(message: Message):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     users = await DB.get_all_users()
     if len(users) > 0:
       for user in users:
@@ -111,10 +120,10 @@ async def show_users(message: Message):
     
 
 
-@dp.message(F.text, Command("send_match"))
+@dp.message(F.text, Command("Отправить_матч"))
 async def send_match(message: Message):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     await DB.clear_user_ready()
     users = await DB.get_not_ready()
     if len(users) > 0:
@@ -129,18 +138,18 @@ async def send_match(message: Message):
       await message.answer(f'Нет пользователей для рассылки')
 
 
-@dp.message(F.text, Command("send_text"))
+@dp.message(F.text, Command("Написать_всем"))
 async def send_text(message: Message, state: FSMContext):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     await state.set_state(Form.text)
     await message.answer(f'Введите сообщение или напишите отмена для выхода')
 
 
-@dp.message(F.text, Command("send_outcome"))
+@dp.message(F.text, Command("Отправить_исход"))
 async def send_outcome(message: Message, state: FSMContext):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     await state.set_state(Form.outcome)
     await message.answer(f'Введите исход или напишите отмена для выхода')
 
@@ -160,8 +169,8 @@ async def cancel_handler(message: Message, state: FSMContext):
 
 @dp.message(Form.outcome)
 async def process_text(message: Message, state: FSMContext):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     users = await DB.get_ready()
     await message.answer(f'Рассылаю исход {len(users)} пользователям')
     for user in users:
@@ -175,8 +184,8 @@ async def process_text(message: Message, state: FSMContext):
 
 @dp.message(Form.text)
 async def process_text(message: Message, state: FSMContext):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
     users = await DB.get_all_approved_users()
     await message.answer(f'Рассылаю сообщение {len(users)} пользователям')
     for user in users:
@@ -190,10 +199,10 @@ async def process_text(message: Message, state: FSMContext):
 
 @dp.message()
 async def get_commands(message: Message):
-  admin = await DB.get_admin()
-  if message.from_user.id == admin['chat_id']:
-    commands = [bot_command.BotCommand(command="send_match", description="Отправить матч"),bot_command.BotCommand(command="send_outcome", description="Отправить исход"),bot_command.BotCommand(command="send_text", description="Написать сообщение всем"),bot_command.BotCommand(command="show_users", description="Кто есть в боте?"),bot_command.BotCommand(command="whois_ready", description="Кто готов?")]
-    await bot.set_my_commands(commands, bot_command_scope_default.BotCommandScopeDefault())
+  user = await DB.get_user(message.from_user.username)
+  if user is not None and  user['role'] == 'admin':
+    await message.answer(f'Клавиатура подключена', reply_markup=admin_button.as_markup())
+
 
 async def main():
   date = datetime.now().strftime('%d%m_%H%M')

