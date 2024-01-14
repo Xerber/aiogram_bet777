@@ -47,8 +47,12 @@ admin_button.button(text='/Кто_готов')
 admin_button.adjust(1,2,2)
 
 class Form(StatesGroup):
+    outcome_match_id = State()
     outcome = State()
     text = State()
+    picture = State()
+    picture_caption = State()
+    ready_match_id = State()
 
 @dp.callback_query()
 async def  callback_query_keyboard(callback_query: types.callback_query):
@@ -63,8 +67,12 @@ async def  callback_query_keyboard(callback_query: types.callback_query):
     await DB.upd_user('banned',username)
     await bot(EditMessageText(text=f'❌ @{username} забанен', chat_id = callback_query.message.chat.id, message_id=callback_query.message.message_id, reply_markup=None))
   elif callback_query.data == 'ready':
-    await DB.upd_user_ready(callback_query.from_user.id)
+    match_id = callback_query.message.caption.split('⚠️')[1]
+    await DB.add_user_ready(match_id, callback_query.from_user.username)
     await bot(EditMessageReplyMarkup(chat_id = callback_query.message.chat.id, message_id=callback_query.message.message_id, reply_markup=accepted_button.as_markup()))
+    outcome = await DB.check_outcome(match_id)
+    if outcome is not None:
+      await bot(SendMessage(chat_id = callback_query.message.chat.id, text = f"⚠️ {match_id}\n⚽️ {outcome}"))
   elif callback_query.data == 'delete':
     await DB.del_user(callback_query.message.text.replace('@',''))
     await bot(EditMessageText(text=f'✅ {callback_query.message.text} удалён', chat_id = callback_query.message.chat.id, message_id=callback_query.message.message_id, reply_markup=None))
@@ -80,8 +88,8 @@ async def cmd_start(message: Message):
     if check is None:
       admin = await DB.get_admin()
       await DB.add_user(chat_id, username)
+      await bot(SendPhoto(chat_id = chat_id,photo=FSInputFile("hello.jpg"),caption=f'An add request has been sent to the administrator. Pending review'))
       await bot(SendMessage(chat_id=admin['chat_id'],text=f'Запрос на добавление от @{username} | {chat_id}',reply_markup=facecontrol.as_markup()))
-      await message.answer(f'An add request has been sent to the administrator. Pending review')
     else:
       if check['status'] == 'waiting':
         await message.answer(f'Your request for addition is already under review.')
@@ -91,67 +99,6 @@ async def cmd_start(message: Message):
         await message.answer(f'You are banned from this bot. Use is prohibited')
   else:
     await message.answer(f'Please fill in the username in the telegram settings and try adding it again')
-
-
-@dp.message(F.text, Command("Кто_готов"))
-async def whois_ready(message: Message):
-  user = await DB.get_user(message.from_user.username)
-  if user['role'] == 'admin':
-    ready_users = await DB.get_ready()
-    if len(ready_users) > 0:
-      text = ''
-      for user in ready_users:
-        text += f"@{user['username']}\n"
-    else:
-      text = 'Список подписавшихся пуст'
-    await message.answer(f'{text}')
-
-
-@dp.message(F.text, Command("Кто_в_боте"))
-async def show_users(message: Message):
-  user = await DB.get_user(message.from_user.username)
-  if user['role'] == 'admin':
-    users = await DB.get_all_users()
-    if len(users) > 0:
-      for user in users:
-        await message.answer(text=f"@{user['username']}",reply_markup=delete_button.as_markup())
-    else:
-      await message.answer(text = 'Список пользователей пуст')
-    
-
-
-@dp.message(F.text, Command("Отправить_матч"))
-async def send_match(message: Message):
-  user = await DB.get_user(message.from_user.username)
-  if user['role'] == 'admin':
-    await DB.clear_user_ready()
-    users = await DB.get_not_ready()
-    if len(users) > 0:
-      await message.answer(f'Рассылаю запрос {len(users)} пользователям')
-      for user in users:
-        try:
-          await bot(SendPhoto(chat_id = user['chat_id'],photo=FSInputFile("example.jpg"), reply_markup=ready_button.as_markup()))
-        except Exception as e:
-          logging.warning(f'{user} - {e}')
-      await message.answer(f'Запрос разослан')
-    else:
-      await message.answer(f'Нет пользователей для рассылки')
-
-
-@dp.message(F.text, Command("Написать_всем"))
-async def send_text(message: Message, state: FSMContext):
-  user = await DB.get_user(message.from_user.username)
-  if user['role'] == 'admin':
-    await state.set_state(Form.text)
-    await message.answer(f'Введите сообщение или напишите отмена для выхода')
-
-
-@dp.message(F.text, Command("Отправить_исход"))
-async def send_outcome(message: Message, state: FSMContext):
-  user = await DB.get_user(message.from_user.username)
-  if user['role'] == 'admin':
-    await state.set_state(Form.outcome)
-    await message.answer(f'Введите исход или напишите отмена для выхода')
 
 
 @dp.message(F.text.casefold() == "отмена")
@@ -167,11 +114,115 @@ async def cancel_handler(message: Message, state: FSMContext):
   await message.answer(f'Действие отменено')
 
 
-@dp.message(Form.outcome)
-async def process_text(message: Message, state: FSMContext):
+@dp.message(F.text, Command("Кто_готов"))
+async def whois_ready(message: Message, state: FSMContext):
   user = await DB.get_user(message.from_user.username)
   if user['role'] == 'admin':
-    users = await DB.get_ready()
+    await state.set_state(Form.ready_match_id)
+    await message.answer(f'Пришлите id матча')
+
+
+@dp.message(Form.ready_match_id)
+async def process_ready_match_id(message: Message, state: FSMContext):
+  check = await DB.get_match(message.text)
+  if check is None:
+    await message.answer(f'Данный id не найден в базе\nНапишите отмена или отправьте корректный id')
+  else:
+    ready_users = await DB.get_ready(message.text)
+    if len(ready_users) > 0:
+      text = ''
+      for user in ready_users:
+        text += f"@{user['username']}\n"
+    else:
+      text = 'Список подписавшихся пуст'
+    await message.answer(f'{text}')
+    await state.clear()
+    
+
+@dp.message(F.text, Command("Кто_в_боте"))
+async def show_users(message: Message):
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
+    users = await DB.get_all_users()
+    if len(users) > 0:
+      for user in users:
+        await message.answer(text=f"@{user['username']}",reply_markup=delete_button.as_markup())
+    else:
+      await message.answer(text = 'Список пользователей пуст')
+    
+
+
+@dp.message(F.text, Command("Отправить_матч"))
+async def send_match(message: Message, state: FSMContext):
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
+    await state.set_state(Form.picture)
+    await message.answer(f'Пришлите мне картинку, которую отправим пользователям или напишите отмена')
+
+
+@dp.message(Form.picture)
+async def process_picture(message: Message, state: FSMContext):
+  await state.update_data(picture_id = message.photo[-1].file_id)
+  await state.set_state(Form.picture_caption)
+  await message.answer(f'Принял картинку. Укажите уникальный id данного матча')
+
+
+@dp.message(Form.picture_caption)
+async def process_picture_caption(message: Message, state: FSMContext):
+  check = await DB.get_match(message.text)
+  if check is None:
+    data = await state.get_data()
+    users = await DB.get_not_ready()
+    if len(users) > 0:
+      await message.answer(f'Рассылаю запрос {len(users)} пользователям')
+      for user in users:
+        try:
+          await bot(SendPhoto(chat_id=user['chat_id'],photo=data['picture_id'], caption=f'⚠️ {message.text}', reply_markup=ready_button.as_markup()))
+        except Exception as e:
+          logging.warning(f'{user} - {e}')
+      await message.answer(f'Запрос разослан')
+      await DB.add_match(message.text)
+    else:
+      await message.answer(f'Нет пользователей для рассылки')
+    await state.clear()
+  else:
+    await message.answer(f'Данный id уже есть в базе. Необходим уникальный\nНапишите отмена или отправьте id')
+
+
+@dp.message(F.text, Command("Написать_всем"))
+async def send_text(message: Message, state: FSMContext):
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
+    await state.set_state(Form.text)
+    await message.answer(f'Введите сообщение или напишите отмена для выхода')
+
+
+@dp.message(F.text, Command("Отправить_исход"))
+async def send_outcome(message: Message, state: FSMContext):
+  user = await DB.get_user(message.from_user.username)
+  if user['role'] == 'admin':
+    await state.set_state(Form.outcome_match_id)
+    await message.answer(f'Введите id матча, к которому исход или напишите отмена')
+
+
+@dp.message(Form.outcome_match_id)
+async def process_text(message: Message, state: FSMContext):
+  check = await DB.get_match(message.text)
+  if check is None:
+    await message.answer(f'Данный id не найден в базе\nНапишите отмена или отправьте корректный id')
+  else:
+    await state.update_data(match_id = message.text)
+    await state.set_state(Form.outcome)
+    await message.answer(f'Введите исход или напишите отмена для выхода')
+
+
+@dp.message(Form.outcome)
+async def process_text(message: Message, state: FSMContext):
+  data = await state.get_data()
+  await DB.upd_outcome(data['match_id'], message.text)
+  await message.answer(f'Исход записан в базу')
+  users = await DB.get_ready(data['match_id'])
+  if len(users) > 0:
     await message.answer(f'Рассылаю исход {len(users)} пользователям')
     for user in users:
       try:
@@ -179,7 +230,9 @@ async def process_text(message: Message, state: FSMContext):
       except Exception as e:
         logging.warning(f'{user} - {e}')
     await message.answer(f'Исход разослан')
-    await state.clear()
+  else:
+    await message.answer(f'Нет подписавшихся пользователей')
+  await state.clear()
 
 
 @dp.message(Form.text)

@@ -11,7 +11,6 @@ class DBCommands:
     async with self.pool.acquire() as conn:
       async with conn.cursor(DictCursor) as cur:
         await cur.execute("INSERT INTO users (chat_id,username) VALUES (%s,%s)",(chat_id,username))
-        return await cur.fetchone()
 
 
   async def upd_user(self,status,username):
@@ -40,30 +39,24 @@ class DBCommands:
         return await cur.fetchone()
 
 
-  async def get_ready(self):
+  async def get_ready(self,match_id):
     async with self.pool.acquire() as conn:
       async with conn.cursor(DictCursor) as cur:
-        await cur.execute("SELECT * from users WHERE is_ready=1 AND role='user' AND status='approved'")
+        await cur.execute("SELECT matches.match_id,users.chat_id,users.username FROM `matches_users` LEFT JOIN matches ON matches_users.match_id = matches.id LEFT JOIN users ON matches_users.user_id = users.id WHERE matches.match_id = %s",(match_id))
         return await cur.fetchall()
 
 
   async def get_not_ready(self):
     async with self.pool.acquire() as conn:
       async with conn.cursor(DictCursor) as cur:
-        await cur.execute("SELECT * from users WHERE is_ready=0 AND role='user' AND status='approved'")
+        await cur.execute("SELECT * from users WHERE role='user' AND status='approved'")
         return await cur.fetchall()
 
 
-  async def upd_user_ready(self,chat_id):
+  async def add_user_ready(self,match_id,username):
     async with self.pool.acquire() as conn:
       async with conn.cursor(DictCursor) as cur:
-        await cur.execute("UPDATE users SET is_ready=1 WHERE chat_id=%s",(chat_id))
-
-
-  async def clear_user_ready(self):
-    async with self.pool.acquire() as conn:
-      async with conn.cursor(DictCursor) as cur:
-        await cur.execute("UPDATE users SET is_ready=0 WHERE is_ready=1 AND role='user' AND status='approved'")
+        await cur.execute("INSERT INTO matches_users (match_id,user_id) VALUES ((SELECT id FROM matches WHERE match_id = %s),(SELECT id FROM users WHERE username=%s))",(match_id,username))
 
 
   async def get_all_users(self):
@@ -78,3 +71,29 @@ class DBCommands:
       async with conn.cursor(DictCursor) as cur:
         await cur.execute("SELECT * from users WHERE role='user' AND status='approved'")
         return await cur.fetchall()
+
+
+  async def add_match(self,match_id):
+    async with self.pool.acquire() as conn:
+      async with conn.cursor(DictCursor) as cur:
+        await cur.execute("INSERT INTO matches (match_id) VALUES (%s)",(match_id))
+
+
+  async def get_match(self,match_id):
+    async with self.pool.acquire() as conn:
+      async with conn.cursor(DictCursor) as cur:
+        await cur.execute("SELECT * from matches WHERE match_id=%s",(match_id))
+        return await cur.fetchone()
+
+
+  async def check_outcome(self,match_id):
+    async with self.pool.acquire() as conn:
+      async with conn.cursor(DictCursor) as cur:
+        await cur.execute("SELECT * FROM matches_users LEFT JOIN matches ON matches_users.match_id = matches.id RIGHT JOIN users ON matches_users.user_id = users.id WHERE matches.match_id = %s",(match_id))
+        return await cur.fetchone()
+
+
+  async def upd_outcome(self,match_id,outcome):
+    async with self.pool.acquire() as conn:
+      async with conn.cursor(DictCursor) as cur:
+        await cur.execute("UPDATE matches SET outcome=%s WHERE match_id=%s",(outcome,match_id))
